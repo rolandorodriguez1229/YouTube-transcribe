@@ -44,3 +44,10 @@ def transcribe():
 
 if __name__ == '__main__':
     app.run(debug=True)
+    
+if __name__ == '__main__':
+    # Development
+    app.run(debug=False)
+else:
+    # Production
+    app.run(host='0.0.0.0', port=10000)
