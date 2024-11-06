@@ -6,9 +6,8 @@ import os
 import json
 import logging
 import tempfile
-from datetime import datetime
 
-# Configurar logging más detallado
+# Configurar logging
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -18,19 +17,23 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Diccionario para almacenar el estado de las transcripciones
-transcription_status = {}
+def get_credentials():
+    logger.debug("Intentando obtener credenciales...")
+    creds_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if not creds_json:
+        logger.error("No se encontraron credenciales en las variables de entorno")
+        return None
+    
+    try:
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        logger.debug("Credenciales cargadas exitosamente")
+        return credentials
+    except Exception as e:
+        logger.error(f"Error al cargar credenciales: {str(e)}")
+        return None
 
-def update_status(task_id, status, message):
-    transcription_status[task_id] = {
-        'status': status,
-        'message': message,
-        'timestamp': datetime.now().isoformat()
-    }
-    logger.debug(f"Status actualizado - ID: {task_id}, Status: {status}, Message: {message}")
-
-def download_audio(url, task_id):
-    update_status(task_id, 'downloading', 'Iniciando descarga del audio...')
+def download_audio(url):
     logger.debug(f"Intentando descargar audio de: {url}")
     
     ydl_opts = {
@@ -39,10 +42,9 @@ def download_audio(url, task_id):
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',
         }],
-        'outtmpl': f'temp_{task_id}_%(id)s.%(ext)s',
+        'outtmpl': 'temp_%(id)s.%(ext)s',
         'quiet': False,
         'no_warnings': False,
-        'progress_hooks': [lambda d: logger.debug(f"Progreso descarga: {d.get('status', 'unknown')}")],
         'extract_flat': False,
         'writesubtitles': False,
         'extractor_args': {
@@ -58,45 +60,37 @@ def download_audio(url, task_id):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            update_status(task_id, 'downloading', 'Obteniendo información del video...')
+            logger.debug("Obteniendo información del video...")
             info = ydl.extract_info(url, download=True)
-            output_file = f"temp_{task_id}_{info['id']}.wav"
+            output_file = f"temp_{info['id']}.wav"
             
             if not os.path.exists(output_file):
                 raise Exception(f"El archivo {output_file} no se creó correctamente")
             
-            update_status(task_id, 'processing', 'Leyendo archivo de audio...')
+            logger.debug("Leyendo archivo de audio...")
             with open(output_file, 'rb') as f:
                 audio_content = f.read()
             
             os.remove(output_file)
-            update_status(task_id, 'downloaded', 'Audio descargado exitosamente')
+            logger.debug("Audio descargado exitosamente")
             return audio_content
             
     except Exception as e:
-        error_msg = f"Error en download_audio: {str(e)}"
-        logger.error(error_msg)
-        update_status(task_id, 'error', error_msg)
-        cleanup_temp_files(task_id)
-        raise Exception(error_msg)
+        logger.error(f"Error en download_audio: {str(e)}")
+        try:
+            # Limpiar archivos temporales
+            for f in os.listdir('.'):
+                if f.startswith('temp_'):
+                    os.remove(f)
+        except:
+            pass
+        raise Exception(f"Error al descargar el audio: {str(e)}")
 
-def cleanup_temp_files(task_id):
-    try:
-        for f in os.listdir('.'):
-            if f.startswith(f'temp_{task_id}'):
-                os.remove(f)
-    except Exception as e:
-        logger.error(f"Error limpiando archivos temporales: {str(e)}")
-
-def transcribe_audio(audio_content, task_id):
-    update_status(task_id, 'transcribing', 'Iniciando transcripción...')
-    logger.debug("Cargando credenciales...")
-    
+def transcribe_audio(audio_content):
+    logger.debug("Iniciando transcripción...")
     credentials = get_credentials()
     if not credentials:
-        error_msg = "No se pudieron cargar las credenciales"
-        update_status(task_id, 'error', error_msg)
-        raise Exception(error_msg)
+        raise Exception("No se pudieron cargar las credenciales")
     
     client = speech_v1.SpeechClient(credentials=credentials)
     
@@ -107,18 +101,12 @@ def transcribe_audio(audio_content, task_id):
         enable_word_time_offsets=True,
     )
 
-    update_status(task_id, 'transcribing', 'Enviando audio a Google Speech-to-Text...')
+    logger.debug("Enviando audio a Google Speech-to-Text...")
     audio = speech_v1.RecognitionAudio(content=audio_content)
 
     try:
         operation = client.long_running_recognize(config=config, audio=audio)
-        update_status(task_id, 'transcribing', 'Procesando audio...')
-        
-        # Monitorear el progreso
-        while not operation.done():
-            update_status(task_id, 'transcribing', 'Transcripción en proceso...')
-            operation.result(timeout=10)
-        
+        logger.debug("Esperando respuesta...")
         response = operation.result()
 
         transcript = ""
@@ -131,22 +119,12 @@ def transcribe_audio(audio_content, task_id):
                 transcript += f"[{start_time:.2f}-{end_time:.2f}] {word} "
             transcript += "\n"
         
-        update_status(task_id, 'completed', 'Transcripción completada exitosamente')
+        logger.debug("Transcripción completada exitosamente")
         return transcript
 
     except Exception as e:
-        error_msg = f"Error en transcribe_audio: {str(e)}"
-        logger.error(error_msg)
-        update_status(task_id, 'error', error_msg)
-        raise Exception(error_msg)
-
-@app.route('/status/<task_id>')
-def get_status(task_id):
-    status = transcription_status.get(task_id, {
-        'status': 'unknown',
-        'message': 'Tarea no encontrada'
-    })
-    return jsonify(status)
+        logger.error(f"Error en transcribe_audio: {str(e)}")
+        raise Exception(f"Error en la transcripción: {str(e)}")
 
 @app.route('/', methods=['GET'])
 def home():
@@ -154,73 +132,59 @@ def home():
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
-    task_id = datetime.now().strftime('%Y%m%d_%H%M%S')
     try:
         url = request.form.get('url')
         if not url:
             return jsonify({
                 'status': 'error',
                 'message': 'Por favor, proporciona una URL de YouTube válida.'
-            })
+            }), 400
 
-        logger.info(f"Procesando URL: {url}")
-        update_status(task_id, 'started', 'Iniciando proceso...')
+        logger.info(f"Iniciando transcripción para URL: {url}")
         
         try:
-            audio_content = download_audio(url, task_id)
+            # Intentar descargar el audio
+            logger.debug("Iniciando descarga de audio...")
+            audio_content = download_audio(url)
             if not audio_content:
                 return jsonify({
                     'status': 'error',
                     'message': 'No se pudo descargar el audio del video.'
-                })
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': f'Error al descargar el audio: {str(e)}'
-            })
-        
-        try:
-            transcript = transcribe_audio(audio_content, task_id)
+                }), 400
+
+            # Intentar transcribir
+            logger.debug("Iniciando transcripción...")
+            transcript = transcribe_audio(audio_content)
             if not transcript:
                 return jsonify({
                     'status': 'error',
                     'message': 'No se pudo generar la transcripción.'
-                })
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': f'Error en la transcripción: {str(e)}'
-            })
-        
-        temp_file_name = None
-        try:
+                }), 400
+
+            # Crear archivo temporal
+            logger.debug("Guardando transcripción...")
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as f:
                 f.write(transcript)
                 temp_file_name = f.name
-            
+
+            # Enviar archivo
             return send_file(
                 temp_file_name,
                 mimetype='text/plain',
                 as_attachment=True,
                 download_name='transcripcion.txt'
             )
+
         except Exception as e:
+            logger.error(f"Error en el proceso: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'message': f'Error al guardar la transcripción: {str(e)}'
-            })
-                        
-    except Exception as e:
-        error_msg = f"Error general: {str(e)}"
-        logger.error(error_msg)
-        update_status(task_id, 'error', error_msg)
-        return jsonify({
-            'status': 'error',
-            'message': error_msg
-        })
+                'message': str(e)
+            }), 500
+
     finally:
-        cleanup_temp_files(task_id)
-        if 'temp_file_name' in locals() and temp_file_name:
+        # Limpiar archivos temporales
+        if 'temp_file_name' in locals():
             try:
                 os.remove(temp_file_name)
             except:
