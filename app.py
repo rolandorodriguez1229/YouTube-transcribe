@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, send_file, jsonify
-from pytube import YouTube
+import youtube_dl
 import os
 import logging
 import tempfile
@@ -11,47 +11,81 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-def get_video_id(url):
-    """Extraer el ID del video de la URL de YouTube."""
-    query = urlparse(url)
-    if query.hostname == 'youtu.be':
-        return query.path[1:]
-    if query.hostname in ('www.youtube.com', 'youtube.com'):
-        if query.path == '/watch':
-            return parse_qs(query.query)['v'][0]
-        if query.path[:7] == '/embed/':
-            return query.path.split('/')[2]
-        if query.path[:3] == '/v/':
-            return query.path.split('/')[2]
-    return None
+class MyLogger:
+    def debug(self, msg):
+        logger.debug(msg)
+    def warning(self, msg):
+        logger.warning(msg)
+    def error(self, msg):
+        logger.error(msg)
+
+def my_hook(d):
+    if d['status'] == 'downloading':
+        logger.info(f'Descargando... {d.get("_percent_str", "0%")}')
+    elif d['status'] == 'finished':
+        logger.info('Descarga completada, convirtiendo...')
 
 def download_audio(url):
     logger.debug(f"Intentando descargar audio de: {url}")
     
-    try:
-        # Crear directorio temporal
-        temp_dir = tempfile.mkdtemp()
-        
-        # Inicializar YouTube
-        yt = YouTube(url)
-        
-        # Obtener el stream de audio
-        audio_stream = yt.streams.filter(only_audio=True).first()
-        if not audio_stream:
-            raise Exception("No se encontró stream de audio")
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': 'temp_%(id)s.%(ext)s',
+        'logger': MyLogger(),
+        'progress_hooks': [my_hook],
+        'verbose': True,
+        # Headers personalizados
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+        },
+        # Configuraciones adicionales
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'logtostderr': False,
+        'quiet': False,
+        'no_warnings': False,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0',
+    }
 
-        # Descargar el audio
-        logger.debug("Descargando audio...")
-        output_file = audio_stream.download(output_path=temp_dir)
-        
-        if not os.path.exists(output_file):
-            raise Exception("No se pudo descargar el audio")
-        
-        logger.debug(f"Audio descargado exitosamente: {output_file}")
-        return output_file, yt.title
+    try:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            logger.debug("Obteniendo información del video...")
+            # Primero obtener metadatos
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'audio')
+            video_id = info.get('id', 'unknown')
+            
+            # Luego descargar
+            logger.debug("Iniciando descarga...")
+            ydl.download([url])
+            
+            # El archivo será temp_ID.mp3 después de la conversión
+            output_file = f"temp_{video_id}.mp3"
+            
+            if not os.path.exists(output_file):
+                raise Exception("No se pudo crear el archivo de audio")
+            
+            logger.debug(f"Audio descargado exitosamente: {output_file}")
+            return output_file, video_title
             
     except Exception as e:
         logger.error(f"Error detallado en download_audio: {str(e)}")
+        # Limpiar archivos temporales en caso de error
+        try:
+            for f in os.listdir('.'):
+                if f.startswith('temp_'):
+                    os.remove(f)
+        except:
+            pass
         raise Exception(f"Error al descargar el audio: {str(e)}")
 
 @app.route('/')
@@ -60,18 +94,12 @@ def home():
 
 @app.route('/download', methods=['POST'])
 def download():
-    temp_file = None
     try:
         url = request.form.get('url')
         if not url:
             return jsonify({'error': 'URL no proporcionada'}), 400
 
-        # Validar URL
-        video_id = get_video_id(url)
-        if not video_id:
-            return jsonify({'error': 'URL de YouTube inválida'}), 400
-
-        logger.debug(f"Iniciando descarga para video ID: {video_id}")
+        logger.info(f"Procesando URL: {url}")
         output_file, title = download_audio(url)
         
         try:
@@ -82,13 +110,10 @@ def download():
                 mimetype='audio/mp3'
             )
         finally:
-            # Limpiar archivos
-            if output_file and os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                    logger.debug(f"Archivo temporal eliminado: {output_file}")
-                except:
-                    pass
+            # Limpiar archivo después de enviarlo
+            if os.path.exists(output_file):
+                os.remove(output_file)
+                logger.debug(f"Archivo temporal eliminado: {output_file}")
                 
     except Exception as e:
         error_message = str(e)
