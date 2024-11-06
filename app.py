@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for
+from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
 from google.cloud import speech_v1
 from google.oauth2 import service_account
 from pytube import YouTube
@@ -6,56 +6,66 @@ import os
 import json
 from pydub import AudioSegment
 import io
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Configuración de credenciales de Google Cloud
 def get_credentials():
-    # Obtener las credenciales del ambiente
+    logger.debug("Intentando obtener credenciales...")
     creds_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    if creds_json:
-        try:
-            # Parsear el JSON de las credenciales
-            creds_dict = json.loads(creds_json)
-            # Crear las credenciales desde el diccionario
-            credentials = service_account.Credentials.from_service_account_info(creds_dict)
-            return credentials
-        except Exception as e:
-            print(f"Error loading credentials: {str(e)}")
-            return None
-    return None
+    if not creds_json:
+        logger.error("No se encontraron credenciales en las variables de entorno")
+        return None
+    
+    try:
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        logger.debug("Credenciales cargadas exitosamente")
+        return credentials
+    except Exception as e:
+        logger.error(f"Error al cargar credenciales: {str(e)}")
+        return None
 
 def download_audio(url):
+    logger.debug(f"Intentando descargar audio de: {url}")
     try:
-        # Descarga el audio del video de YouTube
         yt = YouTube(url)
-        audio_stream = yt.streams.filter(only_audio=True).first()
+        logger.debug(f"Título del video: {yt.title}")
         
-        # Descarga el archivo de audio en memoria
+        audio_stream = yt.streams.filter(only_audio=True).first()
+        if not audio_stream:
+            logger.error("No se encontró stream de audio")
+            return None
+            
         buffer = io.BytesIO()
         audio_stream.stream_to_buffer(buffer)
         buffer.seek(0)
         
-        # Convertir a formato compatible
-        audio = AudioSegment.from_file(buffer)
-        audio = audio.set_channels(1)  # Mono
-        audio = audio.set_frame_rate(16000)  # 16kHz
+        logger.debug("Convirtiendo audio...")
+        audio = AudioSegment.from_file(buffer, format="mp4")
+        audio = audio.set_channels(1)
+        audio = audio.set_frame_rate(16000)
         
-        # Guardar como WAV en memoria
         wav_io = io.BytesIO()
         audio.export(wav_io, format='wav')
         wav_io.seek(0)
         
+        logger.debug("Audio descargado y convertido exitosamente")
         return wav_io
     except Exception as e:
-        print(f"Error downloading audio: {str(e)}")
-        return None
+        logger.error(f"Error en download_audio: {str(e)}")
+        raise Exception(f"Error al descargar el audio: {str(e)}")
 
 def transcribe_audio(audio_content):
+    logger.debug("Iniciando transcripción...")
     credentials = get_credentials()
     if not credentials:
-        raise Exception("No se pudieron cargar las credenciales de Google Cloud")
+        raise Exception("No se pudieron cargar las credenciales")
     
     client = speech_v1.SpeechClient(credentials=credentials)
     
@@ -69,17 +79,20 @@ def transcribe_audio(audio_content):
     audio = speech_v1.RecognitionAudio(content=audio_content.getvalue())
 
     try:
+        logger.debug("Enviando audio a Google Speech-to-Text...")
         operation = client.long_running_recognize(config=config, audio=audio)
+        logger.debug("Esperando respuesta...")
         response = operation.result()
 
         transcript = ""
         for result in response.results:
             transcript += result.alternatives[0].transcript + "\n"
         
+        logger.debug("Transcripción completada exitosamente")
         return transcript
     except Exception as e:
-        print(f"Error in transcription: {str(e)}")
-        return None
+        logger.error(f"Error en transcribe_audio: {str(e)}")
+        raise Exception(f"Error en la transcripción: {str(e)}")
 
 @app.route('/', methods=['GET'])
 def home():
@@ -88,18 +101,24 @@ def home():
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     try:
-        url = request.form['url']
+        url = request.form.get('url')
+        if not url:
+            logger.error("No se proporcionó URL")
+            flash('Por favor, proporciona una URL de YouTube válida.', 'error')
+            return redirect(url_for('home'))
+
+        logger.info(f"Procesando URL: {url}")
         
         # Descargar audio
         audio_content = download_audio(url)
         if not audio_content:
-            flash('Error al descargar el audio del video.', 'error')
+            flash('No se pudo descargar el audio del video.', 'error')
             return redirect(url_for('home'))
         
         # Transcribir
         transcript = transcribe_audio(audio_content)
         if not transcript:
-            flash('Error durante la transcripción.', 'error')
+            flash('No se pudo generar la transcripción.', 'error')
             return redirect(url_for('home'))
         
         # Guardar la transcripción
@@ -112,7 +131,8 @@ def transcribe():
                         download_name='transcripcion.txt')
                         
     except Exception as e:
-        flash(f'Error inesperado: {str(e)}', 'error')
+        logger.error(f"Error en /transcribe: {str(e)}")
+        flash(str(e), 'error')
         return redirect(url_for('home'))
 
 if __name__ == '__main__':
