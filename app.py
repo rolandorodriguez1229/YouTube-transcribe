@@ -33,39 +33,56 @@ def get_credentials():
 def download_audio(url):
     logger.debug(f"Intentando descargar audio de: {url}")
     
-    # Configuración para yt-dlp
+    # Configuración actualizada para yt-dlp
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',
-            'preferredquality': '192',
         }],
         'outtmpl': 'temp_%(id)s.%(ext)s',
-        'prefer_ffmpeg': True,
+        'quiet': False,
+        'no_warnings': False,
+        # Configuración anti-bot
+        'extract_flat': False,
+        'writesubtitles': False,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android'],
+                'player_skip': ['webpage', 'config', 'js'],
+            }
+        },
+        # Configuración de red
+        'socket_timeout': 30,
+        'retries': 3,
+        'nocheckcertificate': True
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Obtener información del video
             logger.debug("Obteniendo información del video...")
             info = ydl.extract_info(url, download=True)
-            
-            # Construir el nombre del archivo descargado
             output_file = f"temp_{info['id']}.wav"
             
-            # Leer el archivo de audio
+            if not os.path.exists(output_file):
+                raise Exception(f"El archivo {output_file} no se creó correctamente")
+            
             with open(output_file, 'rb') as f:
                 audio_content = f.read()
             
-            # Limpiar el archivo temporal
             os.remove(output_file)
-            
             logger.debug("Audio descargado exitosamente")
             return audio_content
             
     except Exception as e:
-        logger.error(f"Error en download_audio: {str(e)}")
+        logger.error(f"Error detallado en download_audio: {str(e)}")
+        # Intentar limpiar archivos temporales si existen
+        try:
+            for f in os.listdir('.'):
+                if f.startswith('temp_'):
+                    os.remove(f)
+        except:
+            pass
         raise Exception(f"Error al descargar el audio: {str(e)}")
 
 def transcribe_audio(audio_content):
@@ -80,7 +97,7 @@ def transcribe_audio(audio_content):
         language_code="es-ES",
         enable_automatic_punctuation=True,
         audio_channel_count=1,
-        enable_word_time_offsets=True,  # Añadido para obtener timestamps
+        enable_word_time_offsets=True,  # Para obtener timestamps
     )
 
     # Convertir el contenido de bytes a objeto RecognitionAudio
@@ -92,10 +109,11 @@ def transcribe_audio(audio_content):
         logger.debug("Esperando respuesta...")
         response = operation.result()
 
-        # Formato mejorado de transcripción con timestamps
+        # Formato de transcripción con timestamps
         transcript = ""
         for result in response.results:
-            for word_info in result.alternatives[0].words:
+            alternative = result.alternatives[0]
+            for word_info in alternative.words:
                 word = word_info.word
                 start_time = word_info.start_time.total_seconds()
                 end_time = word_info.end_time.total_seconds()
@@ -104,9 +122,19 @@ def transcribe_audio(audio_content):
         
         logger.debug("Transcripción completada exitosamente")
         return transcript
+
     except Exception as e:
         logger.error(f"Error en transcribe_audio: {str(e)}")
         raise Exception(f"Error en la transcripción: {str(e)}")
+
+@app.route('/test_ffmpeg')
+def test_ffmpeg():
+    try:
+        import subprocess
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        return f"FFmpeg está instalado correctamente:\n{result.stdout}"
+    except Exception as e:
+        return f"Error al verificar FFmpeg: {str(e)}"
 
 @app.route('/', methods=['GET'])
 def home():
@@ -124,30 +152,44 @@ def transcribe():
         logger.info(f"Procesando URL: {url}")
         
         # Descargar audio
-        audio_content = download_audio(url)
-        if not audio_content:
-            flash('No se pudo descargar el audio del video.', 'error')
+        try:
+            audio_content = download_audio(url)
+            if not audio_content:
+                flash('No se pudo descargar el audio del video.', 'error')
+                return redirect(url_for('home'))
+        except Exception as e:
+            flash(f'Error al descargar el audio: {str(e)}', 'error')
             return redirect(url_for('home'))
         
         # Transcribir
-        transcript = transcribe_audio(audio_content)
-        if not transcript:
-            flash('No se pudo generar la transcripción.', 'error')
+        try:
+            transcript = transcribe_audio(audio_content)
+            if not transcript:
+                flash('No se pudo generar la transcripción.', 'error')
+                return redirect(url_for('home'))
+        except Exception as e:
+            flash(f'Error en la transcripción: {str(e)}', 'error')
             return redirect(url_for('home'))
         
-        # Guardar la transcripción
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as f:
-            f.write(transcript)
-            temp_file_name = f.name
-        
-        return send_file(temp_file_name,
-                        mimetype='text/plain',
-                        as_attachment=True,
-                        download_name='transcripcion.txt')
+        # Guardar la transcripción en un archivo temporal
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as f:
+                f.write(transcript)
+                temp_file_name = f.name
+            
+            return send_file(
+                temp_file_name,
+                mimetype='text/plain',
+                as_attachment=True,
+                download_name='transcripcion.txt'
+            )
+        except Exception as e:
+            flash(f'Error al guardar la transcripción: {str(e)}', 'error')
+            return redirect(url_for('home'))
                         
     except Exception as e:
-        logger.error(f"Error en /transcribe: {str(e)}")
-        flash(str(e), 'error')
+        logger.error(f"Error general en /transcribe: {str(e)}")
+        flash(f'Error inesperado: {str(e)}', 'error')
         return redirect(url_for('home'))
     finally:
         # Limpiar archivos temporales
