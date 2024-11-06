@@ -3,10 +3,13 @@ services:
     name: youtube-downloader
     env: python
     buildCommand: |
-      # Instalar ffmpeg y otras dependencias
-      apt-get update && apt-get install -y ffmpeg python3-pip
-      pip install --upgrade pip
-      pip install -r requirements.txt
+      # Instalar dependencias del sistema
+      apt-get update && apt-get install -y python3-pip ffmpeg
+      python -m pip install --upgrade pip
+      python -m pip install -r requirements.txt
+      # Configuración adicional para youtube-dl
+      mkdir -p $HOME/.config/youtube-dl
+      echo "--no-check-certificate" > $HOME/.config/youtube-dl/config
     startCommand: gunicorn app:app --timeout 300
     envVars:
       - key: PYTHON_VERSION
