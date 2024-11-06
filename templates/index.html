@@ -3,20 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transcriptor de YouTube</title>
+    <title>Descargador de Audio YouTube</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
     <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-        <h1 class="text-2xl font-bold mb-6 text-center">Transcriptor de YouTube</h1>
+        <h1 class="text-2xl font-bold mb-6 text-center">Descargador de Audio YouTube</h1>
         
-        <!-- Mensajes de estado -->
-        <div id="statusMessage" class="hidden mb-4 p-4 rounded"></div>
+        <div id="errorMessage" class="hidden mb-4 p-4 rounded bg-red-100 text-red-700"></div>
         
-        <!-- Formulario -->
-        <form method="POST" action="{{ url_for('transcribe') }}" class="space-y-4">
+        <form id="downloadForm" class="space-y-4">
             <div>
-                <label for="url" class="block text-sm font-medium text-gray-700 mb-2">URL del video de YouTube:</label>
+                <label for="url" class="block text-sm font-medium text-gray-700 mb-2">URL del video:</label>
                 <input type="url" 
                        name="url" 
                        id="url" 
@@ -26,93 +24,68 @@
             </div>
             
             <button type="submit"
-                    id="submitButton"
-                    class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors">
-                Transcribir Video
+                    class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+                    id="submitButton">
+                Descargar Audio
             </button>
         </form>
 
-        <!-- Indicador de progreso -->
-        <div id="progressContainer" class="hidden mt-4">
+        <div id="downloadProgress" class="hidden mt-4">
             <div class="flex items-center justify-center space-x-2">
                 <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-                <span class="text-sm text-gray-600">Procesando video...</span>
+                <span class="text-sm text-gray-600">Descargando...</span>
             </div>
-        </div>
-
-        <!-- Información -->
-        <div class="mt-6 text-sm text-gray-600">
-            <p class="font-medium mb-2">Notas importantes:</p>
-            <ul class="list-disc pl-5 space-y-2">
-                <li>El proceso puede tomar varios minutos dependiendo de la duración del video</li>
-                <li>Solo funciona con videos públicos de YouTube</li>
-                <li>La transcripción se descargará automáticamente al completarse</li>
-            </ul>
         </div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const form = document.querySelector('form');
-            const submitButton = document.getElementById('submitButton');
-            const progressContainer = document.getElementById('progressContainer');
-            const statusMessage = document.getElementById('statusMessage');
-
-            form.addEventListener('submit', async function(e) {
-                e.preventDefault();
+        document.getElementById('downloadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const form = this;
+            const button = document.getElementById('submitButton');
+            const progress = document.getElementById('downloadProgress');
+            const errorMessage = document.getElementById('errorMessage');
+            
+            // Resetear mensajes de error
+            errorMessage.classList.add('hidden');
+            
+            // Mostrar progreso
+            button.disabled = true;
+            progress.classList.remove('hidden');
+            
+            try {
+                const formData = new FormData(form);
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    body: formData
+                });
                 
-                // Mostrar progreso
-                submitButton.disabled = true;
-                submitButton.textContent = 'Procesando...';
-                progressContainer.classList.remove('hidden');
-                statusMessage.classList.add('hidden');
-
-                try {
-                    const formData = new FormData(form);
-                    const response = await fetch('{{ url_for("transcribe") }}', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (response.ok) {
-                        // Si la respuesta es un archivo
-                        if (response.headers.get('Content-Type').includes('text/plain')) {
-                            const blob = await response.blob();
-                            const url = window.URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = 'transcripcion.txt';
-                            document.body.appendChild(a);
-                            a.click();
-                            window.URL.revokeObjectURL(url);
-                            
-                            // Mostrar mensaje de éxito
-                            statusMessage.textContent = 'Transcripción completada con éxito!';
-                            statusMessage.classList.remove('hidden', 'bg-red-100', 'text-red-700');
-                            statusMessage.classList.add('bg-green-100', 'text-green-700');
-                        } else {
-                            // Si es una respuesta JSON
-                            const data = await response.json();
-                            if (data.status === 'error') {
-                                throw new Error(data.message);
-                            }
-                        }
-                    } else {
-                        const errorData = await response.json();
-                        throw new Error(errorData.message || 'Error al procesar el video');
-                    }
-                } catch (error) {
-                    // Mostrar error
-                    statusMessage.textContent = error.message || 'Error al procesar la solicitud';
-                    statusMessage.classList.remove('hidden', 'bg-green-100', 'text-green-700');
-                    statusMessage.classList.add('bg-red-100', 'text-red-700');
-                } finally {
-                    // Restaurar estado del formulario
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Transcribir Video';
-                    progressContainer.classList.add('hidden');
+                if (response.ok) {
+                    // Si es exitoso, el navegador descargará el archivo automáticamente
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    const filenameMatch = contentDisposition && contentDisposition.match(/filename="(.+)"/);
+                    const filename = filenameMatch ? filenameMatch[1] : 'audio.mp3';
+                    
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Error al descargar el audio');
                 }
-            });
+            } catch (error) {
+                errorMessage.textContent = error.message;
+                errorMessage.classList.remove('hidden');
+            } finally {
+                button.disabled = false;
+                progress.classList.add('hidden');
+            }
         });
     </script>
 </body>
