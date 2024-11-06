@@ -1,5 +1,5 @@
 flask==2.2.3
-selenium==4.18.1
-requests==2.31.0
+yt-dlp==2024.3.10
 Werkzeug==2.2.3
 gunicorn==21.2.0
+ffmpeg-python==0.2.0
