@@ -1,12 +1,11 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
+from flask import Flask, render_template, request, send_file, flash, redirect, url_for
 from google.cloud import speech_v1
 from google.oauth2 import service_account
-from pytube import YouTube
+import yt_dlp
 import os
 import json
-from pydub import AudioSegment
-import io
 import logging
+import tempfile
 
 # Configurar logging
 logging.basicConfig(level=logging.DEBUG)
@@ -33,30 +32,38 @@ def get_credentials():
 
 def download_audio(url):
     logger.debug(f"Intentando descargar audio de: {url}")
+    
+    # Configuración para yt-dlp
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'wav',
+            'preferredquality': '192',
+        }],
+        'outtmpl': 'temp_%(id)s.%(ext)s',
+        'prefer_ffmpeg': True,
+    }
+
     try:
-        yt = YouTube(url)
-        logger.debug(f"Título del video: {yt.title}")
-        
-        audio_stream = yt.streams.filter(only_audio=True).first()
-        if not audio_stream:
-            logger.error("No se encontró stream de audio")
-            return None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Obtener información del video
+            logger.debug("Obteniendo información del video...")
+            info = ydl.extract_info(url, download=True)
             
-        buffer = io.BytesIO()
-        audio_stream.stream_to_buffer(buffer)
-        buffer.seek(0)
-        
-        logger.debug("Convirtiendo audio...")
-        audio = AudioSegment.from_file(buffer, format="mp4")
-        audio = audio.set_channels(1)
-        audio = audio.set_frame_rate(16000)
-        
-        wav_io = io.BytesIO()
-        audio.export(wav_io, format='wav')
-        wav_io.seek(0)
-        
-        logger.debug("Audio descargado y convertido exitosamente")
-        return wav_io
+            # Construir el nombre del archivo descargado
+            output_file = f"temp_{info['id']}.wav"
+            
+            # Leer el archivo de audio
+            with open(output_file, 'rb') as f:
+                audio_content = f.read()
+            
+            # Limpiar el archivo temporal
+            os.remove(output_file)
+            
+            logger.debug("Audio descargado exitosamente")
+            return audio_content
+            
     except Exception as e:
         logger.error(f"Error en download_audio: {str(e)}")
         raise Exception(f"Error al descargar el audio: {str(e)}")
@@ -73,10 +80,11 @@ def transcribe_audio(audio_content):
         language_code="es-ES",
         enable_automatic_punctuation=True,
         audio_channel_count=1,
-        sample_rate_hertz=16000,
+        enable_word_time_offsets=True,  # Añadido para obtener timestamps
     )
 
-    audio = speech_v1.RecognitionAudio(content=audio_content.getvalue())
+    # Convertir el contenido de bytes a objeto RecognitionAudio
+    audio = speech_v1.RecognitionAudio(content=audio_content)
 
     try:
         logger.debug("Enviando audio a Google Speech-to-Text...")
@@ -84,9 +92,15 @@ def transcribe_audio(audio_content):
         logger.debug("Esperando respuesta...")
         response = operation.result()
 
+        # Formato mejorado de transcripción con timestamps
         transcript = ""
         for result in response.results:
-            transcript += result.alternatives[0].transcript + "\n"
+            for word_info in result.alternatives[0].words:
+                word = word_info.word
+                start_time = word_info.start_time.total_seconds()
+                end_time = word_info.end_time.total_seconds()
+                transcript += f"[{start_time:.2f}-{end_time:.2f}] {word} "
+            transcript += "\n"
         
         logger.debug("Transcripción completada exitosamente")
         return transcript
@@ -122,10 +136,11 @@ def transcribe():
             return redirect(url_for('home'))
         
         # Guardar la transcripción
-        with open('transcript.txt', 'w', encoding='utf-8') as f:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as f:
             f.write(transcript)
+            temp_file_name = f.name
         
-        return send_file('transcript.txt',
+        return send_file(temp_file_name,
                         mimetype='text/plain',
                         as_attachment=True,
                         download_name='transcripcion.txt')
@@ -134,6 +149,13 @@ def transcribe():
         logger.error(f"Error en /transcribe: {str(e)}")
         flash(str(e), 'error')
         return redirect(url_for('home'))
+    finally:
+        # Limpiar archivos temporales
+        if 'temp_file_name' in locals():
+            try:
+                os.remove(temp_file_name)
+            except:
+                pass
 
 if __name__ == '__main__':
     app.run(debug=False)
