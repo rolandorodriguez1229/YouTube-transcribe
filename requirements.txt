@@ -1,5 +1,5 @@
 flask==2.2.3
-yt-dlp==2024.3.10
+pafy==0.5.5
+youtube-dl==2021.12.17  # Requerido por pafy
 Werkzeug==2.2.3
 gunicorn==21.2.0
-ffmpeg-python==0.2.0
