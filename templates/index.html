@@ -10,19 +10,9 @@
     <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
         <h1 class="text-2xl font-bold mb-6 text-center">Transcriptor de YouTube</h1>
         
-        <!-- Mensajes de alerta -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="mb-4 p-4 rounded {% if category == 'error' %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-
-        <!-- Formulario -->
-        <form action="{{ url_for('transcribe') }}" method="POST" class="space-y-4" id="transcribeForm">
+        <div id="errorContainer" class="hidden mb-4 p-4 rounded bg-red-100 text-red-700"></div>
+        
+        <form id="transcribeForm" class="space-y-4">
             <div>
                 <label for="url" class="block text-sm font-medium text-gray-700 mb-2">URL del video de YouTube:</label>
                 <input type="url" 
@@ -40,15 +30,15 @@
             </button>
         </form>
 
-        <!-- Indicador de procesamiento -->
-        <div id="processingIndicator" class="hidden mt-4">
-            <div class="flex items-center justify-center space-x-2">
-                <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                <span class="text-sm text-gray-600">Procesando video...</span>
+        <div id="progressContainer" class="hidden mt-4">
+            <div class="mb-2">
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
             </div>
+            <p id="statusText" class="text-sm text-gray-600 text-center"></p>
         </div>
 
-        <!-- Información adicional -->
         <div class="mt-6 text-sm text-gray-600">
             <p class="font-medium mb-2">Notas importantes:</p>
             <ul class="list-disc pl-5 space-y-2">
@@ -61,15 +51,103 @@
     </div>
 
     <script>
-        document.getElementById('transcribeForm').addEventListener('submit', function(e) {
-            const button = document.getElementById('submitButton');
-            const processingIndicator = document.getElementById('processingIndicator');
+        const form = document.getElementById('transcribeForm');
+        const submitButton = document.getElementById('submitButton');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const statusText = document.getElementById('statusText');
+        const errorContainer = document.getElementById('errorContainer');
+
+        let taskId = null;
+        let statusCheckInterval = null;
+
+        function updateProgress(status, message) {
+            statusText.textContent = message;
+            progressContainer.classList.remove('hidden');
             
-            button.disabled = true;
-            button.innerHTML = 'Procesando...';
-            button.classList.add('opacity-50');
-            processingIndicator.classList.remove('hidden');
-        });
-    </script>
-</body>
-</html>
+            switch(status) {
+                case 'downloading':
+                    progressBar.style.width = '25%';
+                    break;
+                case 'processing':
+                    progressBar.style.width = '50%';
+                    break;
+                case 'transcribing':
+                    progressBar.style.width = '75%';
+                    break;
+                case 'completed':
+                    progressBar.style.width = '100%';
+                    break;
+                case 'error':
+                    showError(message);
+                    break;
+            }
+        }
+
+        function showError(message) {
+            errorContainer.textContent = message;
+            errorContainer.classList.remove('hidden');
+            progressContainer.classList.add('hidden');
+            submitButton.disabled = false;
+            submitButton.textContent = 'Transcribir Video';
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+        }
+
+        async function checkStatus() {
+            if (!taskId) return;
+            
+            try {
+                const response = await fetch(`/status/${taskId}`);
+                const data = await response.json();
+                
+                updateProgress(data.status, data.message);
+                
+                if (data.status === 'completed' || data.status === 'error') {
+                    clearInterval(statusCheckInterval);
+                }
+            } catch (error) {
+                showError('Error al verificar el estado del proceso');
+                clearInterval(statusCheckInterval);
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            errorContainer.classList.add('hidden');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Procesando...';
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            
+            const formData = new FormData(form);
+            
+            try {
+                taskId = new Date().getTime().toString();
+                statusCheckInterval = setInterval(checkStatus, 2000);
+                
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'transcripcion.txt';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    updateProgress('completed', 'Transcripción completada exitosamente');
+                } else {
+                    const data = await response.json();
+                    showError(data.message || 'Error al procesar el video');
+                }
+            } catch (error) {
+                showError('Error al procesar la solicitud');
+            } finally {
+                submitButton.disabled = false
