@@ -3,7 +3,7 @@ services:
     name: youtube-downloader
     env: python
     buildCommand: |
-      apt-get update && apt-get install -y python3-pip
+      apt-get update && apt-get install -y ffmpeg python3-pip
       pip install --upgrade pip
       pip install -r requirements.txt
     startCommand: gunicorn app:app
