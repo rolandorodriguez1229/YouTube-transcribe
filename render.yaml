@@ -3,22 +3,11 @@ services:
     name: youtube-downloader
     env: python
     buildCommand: |
-      # Instalar Chrome y ChromeDriver
-      apt-get update && apt-get install -y wget gnupg2
-      wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
-      echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list
-      apt-get update
-      apt-get install -y google-chrome-stable
-      CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1)
-      wget https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}
-      CHROMEDRIVER_VERSION=$(cat LATEST_RELEASE_${CHROME_VERSION})
-      wget https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip
-      unzip chromedriver_linux64.zip
-      mv chromedriver /usr/local/bin/
-      chmod +x /usr/local/bin/chromedriver
-      # Instalar dependencias de Python
+      # Instalar ffmpeg y otras dependencias
+      apt-get update && apt-get install -y ffmpeg python3-pip
+      pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --timeout 300
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
