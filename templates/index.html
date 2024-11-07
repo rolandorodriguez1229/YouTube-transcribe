@@ -1,146 +1,102 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transcriptor de Audio</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
-<body class="bg-gray-100 min-h-screen py-12 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
-        <div class="text-center mb-8">
-            <h1 class="text-2xl font-bold text-gray-900">Transcriptor de Audio MP3</h1>
-            <p class="mt-2 text-sm text-gray-600">Sube un archivo MP3 para transcribirlo a texto</p>
-        </div>
+<script>
+    const form = document.getElementById('uploadForm');
+    const loading = document.getElementById('loading');
+    const error = document.getElementById('error');
+    const errorText = document.getElementById('errorText');
+    const result = document.getElementById('result');
+    const transcriptionText = document.getElementById('transcriptionText');
+    const downloadButton = document.getElementById('downloadButton');
+    const fileInput = document.getElementById('audioFile');
 
-        <form id="uploadForm" class="space-y-6">
-            <div class="flex justify-center">
-                <input type="file" 
-                       id="audioFile" 
-                       name="file"
-                       accept=".mp3"
-                       class="block w-full text-sm text-gray-500
-                              file:mr-4 file:py-2 file:px-4
-                              file:rounded-full file:border-0
-                              file:text-sm file:font-semibold
-                              file:bg-blue-50 file:text-blue-700
-                              hover:file:bg-blue-100">
-            </div>
+    // Mostrar información del archivo al seleccionarlo
+    fileInput.addEventListener('change', function(e) {
+        console.log('Archivo seleccionado:', e.target.files[0]);
+    });
 
-            <div>
-                <button type="submit" 
-                        class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                    Transcribir Audio
-                </button>
-            </div>
-        </form>
+    function showError(message) {
+        error.classList.remove('hidden');
+        errorText.textContent = message;
+        loading.classList.add('hidden');
+    }
 
-        <div id="loading" class="hidden mt-4">
-            <div class="flex justify-center items-center">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                <span class="ml-2">Procesando audio...</span>
-            </div>
-        </div>
+    function clearError() {
+        error.classList.add('hidden');
+        errorText.textContent = '';
+    }
 
-        <div id="error" class="hidden mt-4">
-            <div class="bg-red-50 border-l-4 border-red-500 p-4">
-                <div class="flex">
-                    <div class="flex-shrink-0">
-                        <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
-                        </svg>
-                    </div>
-                    <div class="ml-3">
-                        <p id="errorText" class="text-sm text-red-700">
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="result" class="hidden mt-6">
-            <h2 class="text-lg font-semibold text-gray-900 mb-2">Transcripción:</h2>
-            <div id="transcriptionText" class="bg-gray-50 rounded p-4 text-gray-700 mb-4"></div>
-            <div class="text-center">
-                <button id="downloadButton" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                    Descargar Transcripción
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const form = document.getElementById('uploadForm');
-        const loading = document.getElementById('loading');
-        const error = document.getElementById('error');
-        const errorText = document.getElementById('errorText');
-        const result = document.getElementById('result');
-        const transcriptionText = document.getElementById('transcriptionText');
-        const downloadButton = document.getElementById('downloadButton');
-
-        function showError(message) {
-            error.classList.remove('hidden');
-            errorText.textContent = message;
-            loading.classList.add('hidden');
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearError();
+        
+        const file = fileInput.files[0];
+        console.log('Iniciando envío de archivo:', file);
+        
+        if (!file) {
+            showError('Por favor selecciona un archivo MP3');
+            return;
         }
 
-        function clearError() {
-            error.classList.add('hidden');
-            errorText.textContent = '';
+        if (!file.name.toLowerCase().endsWith('.mp3')) {
+            showError('Solo se permiten archivos MP3');
+            return;
         }
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            clearError();
-            
-            const fileInput = document.getElementById('audioFile');
-            const file = fileInput.files[0];
-            
-            if (!file) {
-                showError('Por favor selecciona un archivo MP3');
-                return;
-            }
+        loading.classList.remove('hidden');
+        result.classList.add('hidden');
 
-            if (!file.name.toLowerCase().endsWith('.mp3')) {
-                showError('Solo se permiten archivos MP3');
-                return;
-            }
-
-            loading.classList.remove('hidden');
-            result.classList.add('hidden');
-
+        try {
+            // Crear y verificar FormData
             const formData = new FormData();
             formData.append('file', file);
+            
+            // Log del FormData
+            console.log('FormData creado:', formData);
+            for (let pair of formData.entries()) {
+                console.log('FormData contiene:', pair[0], pair[1]);
+            }
+
+            // Hacer la petición
+            console.log('Iniciando fetch...');
+            const response = await fetch('/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+            console.log('Respuesta recibida:', response);
+
+            let data;
+            const responseText = await response.text();
+            console.log('Texto de respuesta:', responseText);
 
             try {
-                const response = await fetch('/transcribe', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || 'Error al procesar el archivo');
-                }
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                transcriptionText.textContent = data.transcription;
-                result.classList.remove('hidden');
-                
-                downloadButton.onclick = () => {
-                    window.location.href = `/download/${data.filename}`;
-                };
-            } catch (error) {
-                showError(error.message);
-                result.classList.add('hidden');
-            } finally {
-                loading.classList.add('hidden');
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Error al parsear respuesta:', parseError);
+                throw new Error(`Error al procesar la respuesta del servidor: ${responseText}`);
             }
-        });
-    </script>
-</body>
-</html>
+
+            console.log('Datos procesados:', data);
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Error en el servidor');
+            }
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            transcriptionText.textContent = data.transcription;
+            result.classList.remove('hidden');
+            
+            // Configurar botón de descarga
+            downloadButton.onclick = () => {
+                window.location.href = `/download/${data.filename}`;
+            };
+        } catch (error) {
+            console.error('Error completo:', error);
+            showError(`Error: ${error.message}`);
+            result.classList.add('hidden');
+        } finally {
+            loading.classList.add('hidden');
+        }
+    });
+</script>
