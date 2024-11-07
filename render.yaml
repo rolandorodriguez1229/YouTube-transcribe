@@ -2,11 +2,12 @@ services:
   - type: web
     name: flask-speech-to-text
     env: python
-    buildCommand: |
-      pip install -r requirements.txt
-    startCommand: |
-      python -c "import os; f=open('google_credentials.json', 'w'); f.write(os.environ['GOOGLE_APPLICATION_CREDENTIALS']); f.close()"
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      bash -c '
+      echo "$GOOGLE_APPLICATION_CREDENTIALS" > google_credentials.json &&
       gunicorn app:app
+      '
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.12
