@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from google.cloud import speech
-from google.oauth2 import service_account
 import os
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -15,27 +14,24 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = 'temp_files'
 
+# Asegurarse de que existe el directorio temporal
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
-def get_speech_client():
-    """Crear cliente de Speech-to-Text usando credenciales directamente"""
-    try:
-        credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        if not credentials_json:
-            raise Exception("No se encontraron las credenciales")
-            
-        # Convertir string a diccionario
-        credentials_info = json.loads(credentials_json)
-        
-        # Crear credenciales directamente del JSON
-        credentials = service_account.Credentials.from_service_account_info(credentials_info)
-        
-        # Crear y retornar el cliente
-        return speech.SpeechClient(credentials=credentials)
-    except Exception as e:
-        print(f"Error al crear el cliente: {str(e)}")
-        raise
+# Crear archivo de credenciales
+def setup_credentials():
+    creds_content = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if creds_content:
+        creds_path = 'google_credentials.json'
+        with open(creds_path, 'w') as f:
+            f.write(creds_content)
+        return creds_path
+    return None
+
+# Configurar credenciales
+CREDENTIALS_PATH = setup_credentials()
+if CREDENTIALS_PATH:
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = CREDENTIALS_PATH
 
 @app.route('/')
 def index():
@@ -67,7 +63,7 @@ def transcribe_audio():
             audio.export(temp_wav.name, format="wav")
         
         # Initialize Google Cloud client
-        client = get_speech_client()
+        client = speech.SpeechClient()
         
         # Read the audio file
         with open(temp_wav.name, 'rb') as audio_file:
