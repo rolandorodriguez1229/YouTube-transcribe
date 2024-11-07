@@ -1,8 +1,6 @@
+venv/
+__pycache__/
 *.pyc
-__pycache__
 .env
-*.wav
-transcript.txt
-.DS_Store
-*.mp3
-temp_*
+*.json
+temp_files/
