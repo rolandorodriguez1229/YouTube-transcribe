@@ -1,102 +1,20 @@
-<script>
-    const form = document.getElementById('uploadForm');
-    const loading = document.getElementById('loading');
-    const error = document.getElementById('error');
-    const errorText = document.getElementById('errorText');
-    const result = document.getElementById('result');
-    const transcriptionText = document.getElementById('transcriptionText');
-    const downloadButton = document.getElementById('downloadButton');
-    const fileInput = document.getElementById('audioFile');
-
-    // Mostrar información del archivo al seleccionarlo
-    fileInput.addEventListener('change', function(e) {
-        console.log('Archivo seleccionado:', e.target.files[0]);
-    });
-
-    function showError(message) {
-        error.classList.remove('hidden');
-        errorText.textContent = message;
-        loading.classList.add('hidden');
-    }
-
-    function clearError() {
-        error.classList.add('hidden');
-        errorText.textContent = '';
-    }
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clearError();
-        
-        const file = fileInput.files[0];
-        console.log('Iniciando envío de archivo:', file);
-        
-        if (!file) {
-            showError('Por favor selecciona un archivo MP3');
-            return;
-        }
-
-        if (!file.name.toLowerCase().endsWith('.mp3')) {
-            showError('Solo se permiten archivos MP3');
-            return;
-        }
-
-        loading.classList.remove('hidden');
-        result.classList.add('hidden');
-
-        try {
-            // Crear y verificar FormData
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            // Log del FormData
-            console.log('FormData creado:', formData);
-            for (let pair of formData.entries()) {
-                console.log('FormData contiene:', pair[0], pair[1]);
-            }
-
-            // Hacer la petición
-            console.log('Iniciando fetch...');
-            const response = await fetch('/transcribe', {
-                method: 'POST',
-                body: formData
-            });
-            console.log('Respuesta recibida:', response);
-
-            let data;
-            const responseText = await response.text();
-            console.log('Texto de respuesta:', responseText);
-
-            try {
-                data = JSON.parse(responseText);
-            } catch (parseError) {
-                console.error('Error al parsear respuesta:', parseError);
-                throw new Error(`Error al procesar la respuesta del servidor: ${responseText}`);
-            }
-
-            console.log('Datos procesados:', data);
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Error en el servidor');
-            }
-
-            if (data.error) {
-                throw new Error(data.error);
-            }
-
-            transcriptionText.textContent = data.transcription;
-            result.classList.remove('hidden');
-            
-            // Configurar botón de descarga
-            downloadButton.onclick = () => {
-                window.location.href = `/download/${data.filename}`;
-            };
-        } catch (error) {
-            console.error('Error completo:', error);
-            showError(`Error: ${error.message}`);
-            result.classList.add('hidden');
-        } finally {
-            loading.classList.add('hidden');
-        }
-    });
-</script>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcriptor de Audio</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-md mx-auto bg-white p-6 rounded-lg shadow">
+        <h1 class="text-2xl font-bold mb-4">Transcriptor de Audio</h1>
+        <form id="uploadForm">
+            <input type="file" accept=".mp3" class="mb-4">
+            <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded">
+                Transcribir
+            </button>
+        </form>
+    </div>
+</body>
+</html>
