@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from google.cloud import speech
+from google.oauth2 import service_account
 import os
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -14,24 +15,27 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = 'temp_files'
 
-# Asegurarse de que existe el directorio temporal
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
-# Crear archivo de credenciales desde la variable de entorno
-def setup_credentials():
-    credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    if credentials_json and credentials_json.startswith('{'):
-        # Si es un JSON, crear un archivo temporal
-        fd, temp_path = tempfile.mkstemp(suffix='.json')
-        with os.fdopen(fd, 'w') as temp:
-            temp.write(credentials_json)
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_path
-        return temp_path
-    return None
-
-# Configurar credenciales al inicio
-creds_path = setup_credentials()
+def get_speech_client():
+    """Crear cliente de Speech-to-Text usando credenciales directamente"""
+    try:
+        credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        if not credentials_json:
+            raise Exception("No se encontraron las credenciales")
+            
+        # Convertir string a diccionario
+        credentials_info = json.loads(credentials_json)
+        
+        # Crear credenciales directamente del JSON
+        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        
+        # Crear y retornar el cliente
+        return speech.SpeechClient(credentials=credentials)
+    except Exception as e:
+        print(f"Error al crear el cliente: {str(e)}")
+        raise
 
 @app.route('/')
 def index():
@@ -63,7 +67,7 @@ def transcribe_audio():
             audio.export(temp_wav.name, format="wav")
         
         # Initialize Google Cloud client
-        client = speech.SpeechClient()
+        client = get_speech_client()
         
         # Read the audio file
         with open(temp_wav.name, 'rb') as audio_file:
@@ -100,6 +104,7 @@ def transcribe_audio():
         })
     
     except Exception as e:
+        print(f"Error durante la transcripción: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
@@ -124,15 +129,6 @@ def download_file(filename):
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-# Limpiar archivo de credenciales al cerrar
-@app.teardown_appcontext
-def cleanup_credentials(exception=None):
-    if creds_path and os.path.exists(creds_path):
-        try:
-            os.unlink(creds_path)
-        except:
-            pass
 
 if __name__ == '__main__':
     app.run(debug=True)
