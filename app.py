@@ -1,23 +1,23 @@
 from flask import Flask, render_template, request, jsonify, send_file
-from google.cloud import speech
 import os
 from pydub import AudioSegment
 from dotenv import load_dotenv
 import tempfile
 from werkzeug.utils import secure_filename
 import io
+from openai import OpenAI
 
 load_dotenv()
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024  # 25MB max file size
 app.config['UPLOAD_FOLDER'] = 'temp_files'
-
-# Configurar la ruta de las credenciales
-os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'google_credentials.json'
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
+
+# Inicializar cliente de OpenAI
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 @app.route('/')
 def index():
@@ -36,56 +36,29 @@ def transcribe_audio():
         return jsonify({'error': 'Only MP3 files are supported'}), 400
 
     try:
-        print("Verificando archivo de credenciales...")
-        if not os.path.exists('google_credentials.json'):
-            return jsonify({'error': 'Credenciales no encontradas'}), 500
-            
         filename = secure_filename(file.filename)
         base_filename = os.path.splitext(filename)[0]
         
-        # Create temporary files for audio processing
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_mp3:
-            file.save(temp_mp3.name)
-            
-        # Convert MP3 to WAV
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-            audio = AudioSegment.from_mp3(temp_mp3.name)
-            audio.export(temp_wav.name, format="wav")
+        # Guardar archivo temporalmente
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(temp_path)
         
-        print("Inicializando cliente de Speech...")
-        # Initialize Google Cloud client
-        client = speech.SpeechClient()
+        # Abrir archivo y transcribir con OpenAI
+        with open(temp_path, 'rb') as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="es"
+            )
         
-        # Read the audio file
-        with open(temp_wav.name, 'rb') as audio_file:
-            content = audio_file.read()
-        
-        print("Configurando reconocimiento...")
-        # Configure the recognition
-        audio = speech.RecognitionAudio(content=content)
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            language_code="es-ES",
-            enable_automatic_punctuation=True,
-        )
-        
-        print("Realizando transcripción...")
-        # Perform the transcription
-        response = client.recognize(config=config, audio=audio)
-        
-        # Extract the transcribed text
-        transcription = ""
-        for result in response.results:
-            transcription += result.alternatives[0].transcript + "\n"
-        
-        # Save transcription to a temporary file
+        # Guardar transcripción en archivo
+        transcription = transcript.text
         txt_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{base_filename}.txt")
         with open(txt_path, 'w', encoding='utf-8') as txt_file:
             txt_file.write(transcription)
         
-        # Clean up audio temporary files
-        os.unlink(temp_mp3.name)
-        os.unlink(temp_wav.name)
+        # Limpiar archivo temporal de audio
+        os.unlink(temp_path)
         
         return jsonify({
             'transcription': transcription,
@@ -94,6 +67,8 @@ def transcribe_audio():
     
     except Exception as e:
         print(f"Error durante la transcripción: {str(e)}")
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
