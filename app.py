@@ -6,16 +6,32 @@ from dotenv import load_dotenv
 import tempfile
 from werkzeug.utils import secure_filename
 import io
+import json
 
 load_dotenv()
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = 'temp_files'
 
 # Asegurarse de que existe el directorio temporal
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
+
+# Crear archivo de credenciales desde la variable de entorno
+def setup_credentials():
+    credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if credentials_json and credentials_json.startswith('{'):
+        # Si es un JSON, crear un archivo temporal
+        fd, temp_path = tempfile.mkstemp(suffix='.json')
+        with os.fdopen(fd, 'w') as temp:
+            temp.write(credentials_json)
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_path
+        return temp_path
+    return None
+
+# Configurar credenciales al inicio
+creds_path = setup_credentials()
 
 @app.route('/')
 def index():
@@ -91,16 +107,13 @@ def download_file(filename):
     try:
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
         
-        # Leer el contenido del archivo
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Crear un archivo en memoria
         mem_file = io.BytesIO()
         mem_file.write(content.encode('utf-8'))
         mem_file.seek(0)
         
-        # Eliminar el archivo temporal
         os.unlink(file_path)
         
         return send_file(
@@ -111,6 +124,15 @@ def download_file(filename):
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# Limpiar archivo de credenciales al cerrar
+@app.teardown_appcontext
+def cleanup_credentials(exception=None):
+    if creds_path and os.path.exists(creds_path):
+        try:
+            os.unlink(creds_path)
+        except:
+            pass
 
 if __name__ == '__main__':
     app.run(debug=True)
