@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 import tempfile
 from werkzeug.utils import secure_filename
 import io
-import json
 
 load_dotenv()
 
@@ -14,24 +13,11 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = 'temp_files'
 
-# Asegurarse de que existe el directorio temporal
+# Configurar la ruta de las credenciales
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'google_credentials.json'
+
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
-
-# Crear archivo de credenciales
-def setup_credentials():
-    creds_content = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    if creds_content:
-        creds_path = 'google_credentials.json'
-        with open(creds_path, 'w') as f:
-            f.write(creds_content)
-        return creds_path
-    return None
-
-# Configurar credenciales
-CREDENTIALS_PATH = setup_credentials()
-if CREDENTIALS_PATH:
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = CREDENTIALS_PATH
 
 @app.route('/')
 def index():
@@ -50,6 +36,10 @@ def transcribe_audio():
         return jsonify({'error': 'Only MP3 files are supported'}), 400
 
     try:
+        print("Verificando archivo de credenciales...")
+        if not os.path.exists('google_credentials.json'):
+            return jsonify({'error': 'Credenciales no encontradas'}), 500
+            
         filename = secure_filename(file.filename)
         base_filename = os.path.splitext(filename)[0]
         
@@ -62,6 +52,7 @@ def transcribe_audio():
             audio = AudioSegment.from_mp3(temp_mp3.name)
             audio.export(temp_wav.name, format="wav")
         
+        print("Inicializando cliente de Speech...")
         # Initialize Google Cloud client
         client = speech.SpeechClient()
         
@@ -69,6 +60,7 @@ def transcribe_audio():
         with open(temp_wav.name, 'rb') as audio_file:
             content = audio_file.read()
         
+        print("Configurando reconocimiento...")
         # Configure the recognition
         audio = speech.RecognitionAudio(content=content)
         config = speech.RecognitionConfig(
@@ -77,6 +69,7 @@ def transcribe_audio():
             enable_automatic_punctuation=True,
         )
         
+        print("Realizando transcripción...")
         # Perform the transcription
         response = client.recognize(config=config, audio=audio)
         
